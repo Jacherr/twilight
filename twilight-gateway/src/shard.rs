@@ -762,7 +762,7 @@ impl Shard {
                         self.connection = None;
                         return Err(ReceiveMessageError {
                             kind: ReceiveMessageErrorType::Io,
-                            source: Some(Box::new(IoErrorKind::TimedOut.into())),
+                            source: Some(Box::from(std::io::Error::from(IoErrorKind::TimedOut))),
                         });
                     } else {
                         self.heartbeat()
