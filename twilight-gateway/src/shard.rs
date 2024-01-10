@@ -71,16 +71,11 @@ use crate::{
 };
 use futures_util::{stream::Stream, SinkExt};
 use serde::{de::DeserializeOwned, Deserialize};
-#[cfg(any(
-    feature = "native",
-    feature = "rustls-native-roots",
-    feature = "rustls-webpki-roots"
-))]
-use std::io::ErrorKind as IoErrorKind;
 use std::{
     env::consts::OS,
     error::Error,
     future::{poll_fn, Future},
+    io::ErrorKind as IoErrorKind,
     pin::Pin,
     str,
     task::{Context, Poll},
@@ -762,6 +757,13 @@ impl Shard {
                             .close(CloseFrame::RESUME)
                             .await
                             .map_err(ReceiveMessageError::from_send)?;
+                    } else if self.status.is_disconnected() {
+                        tracing::info!("did not receive close frame in time");
+                        self.connection = None;
+                        return Err(ReceiveMessageError {
+                            kind: ReceiveMessageErrorType::Io,
+                            source: Some(Box::new(IoErrorKind::TimedOut.into())),
+                        });
                     } else {
                         self.heartbeat()
                             .await
@@ -825,6 +827,7 @@ impl Shard {
                     self.disconnect(CloseInitiator::Gateway(
                         frame.as_ref().map(|frame| frame.code),
                     ));
+                    self.heartbeat_interval = None;
                 }
             }
             Message::Text(event) => {
@@ -1017,7 +1020,6 @@ impl Shard {
     /// Update internal state from gateway disconnect.
     fn disconnect(&mut self, initiator: CloseInitiator) {
         // May not send any additional WebSocket messages.
-        self.heartbeat_interval = None;
         self.ratelimiter = None;
         // Not resuming, drop session and resume URL.
         // https://discord.com/developers/docs/topics/gateway#initiating-a-disconnect
@@ -1227,6 +1229,7 @@ impl Shard {
         self.status = ConnectionStatus::Identifying;
         #[cfg(any(feature = "zlib-stock", feature = "zlib-simd"))]
         self.inflater.reset();
+        self.heartbeat_interval = None;
 
         Ok(())
     }
